@@ -73,7 +73,7 @@ extension JSON {
       stream.write("\"")
       stream.write(value)
       stream.write("\"")
-    case .float(let value):
+    case .number(let value):
       stream.write(value.description)
     case .bool(let value):
       stream.write(value.description)

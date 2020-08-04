@@ -10,7 +10,7 @@ public indirect enum JSON {
   case object([String: JSON])
   case array([JSON])
   case string(String)
-  case float(Float)
+  case number(Double)
   case bool(Bool)
   case null
 }
@@ -32,97 +32,97 @@ extension JSON {
     case colon
     case comma
     case string(String)
-    case number(Float, String)
+    case number(Double, String)
     case bool(Bool)
     case null
     case eof
-
-    var id: Int {
-      switch self {
-      case .leftBrace:
-        return 0
-      case .rightBrace:
-        return 1
-      case .leftBrack:
-        return 2
-      case .rightBrack:
-        return 3
-      case .colon:
-        return 4
-      case .comma:
-        return 5
-      case .string:
-        return 6
-      case .number:
-        return 7
-      case .bool:
-        return 8
-      case .null:
-        return 9
-      case .eof:
-        return 10
-      }
-    }
   }
 }
 
 extension JSON {
   enum Error: Swift.Error {
     case invalidCharacter(Character)
+    case invalidObject(Token)
+    case invalidArray(Token)
     case invalidNumber(String)
     case invalidToken(Token)
     case unexpectedEOF
   }
 }
 
-// https://en.wikipedia.org/wiki/Backus%E2%80%93Naur_form
-// https://my.liyunde.com/backus-naur-form-bnf/
-// https://en.wikipedia.org/wiki/JSON
 extension JSON {
   struct Lexer {
-    var source: String
-    var index: String.Index
+    var bytes: Array<UInt8>
+    var index: Array<UInt8>.Index
 
     init(source: String) {
-      self.source = source
-      self.index = source.startIndex
+      var string = source
+      self.bytes = string.withUTF8(Array.init(_:))
+      self.index = bytes.startIndex
     }
 
     mutating func lex() throws -> Token {
-      while index < source.endIndex {
+      while index < bytes.endIndex {
         defer {
-          source.formIndex(after: &index)
+          bytes.formIndex(after: &index)
         }
 
-        switch source[index] {
-        case let char where char.isWhitespace && char.isASCII:
+        switch bytes[index] {
+        case let byte where byte.isWhitespace:
           continue
-        case "{":
+        case .leftBrace:
           return .leftBrace
-        case "}":
+        case .rightBrace:
           return .rightBrace
-        case "[":
+        case .leftBrack:
           return .leftBrack
-        case "]":
+        case .rightBrack:
           return .rightBrack
-        case ":":
+        case .colon:
           return .colon
-        case ",":
+        case .comma:
           return .comma
-        case "n":
-          return try lexNull(index)
-        case "t", "f":
-          return try lexBool(index)
-        case "\"":
+        case .quote:
           return try lexString(index)
-        case let char where char == "-" || (char.isNumber && char.isASCII):
+        case .zero ... .nine, .minus:
           return try lexNumber(index)
-        case let char:
-          throw Error.invalidCharacter(char)
+        case .t, .f:
+          return try lexBool(index)
+        case .n:
+          return try lexNull(index)
+        case let byte:
+          throw Error.invalidCharacter(Character(Unicode.Scalar(byte)))
         }
       }
 
       return .eof
+    }
+
+    /// Lex a string literal.
+    ///
+    /// string-literal ::= '"' [^"\n\f\v\r]* '"'
+    mutating func lexString(_ start: Int) throws -> Token {
+      bytes.formIndex(after: &index)
+      while index < bytes.endIndex {
+        switch bytes[index] {
+        case .quote:
+          return .string(
+            String(decoding: bytes[bytes.index(after: start)..<index], as: Unicode.UTF8.self))
+        case .backslash:
+          bytes.formIndex(after: &index)
+          if bytes[index] == .x || bytes[index] == .zero || bytes[index] == .space
+            || bytes[index] == .newLine
+          {
+            throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[index])))
+          }
+        case .horizontalTab, .newLine:
+          throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[index])))
+        default:
+          ()
+        }
+        bytes.formIndex(after: &index)
+      }
+      throw Error.unexpectedEOF
     }
 
     /// Lex a number literal.
@@ -131,55 +131,45 @@ extension JSON {
     /// integer-literal ::= digit+
     /// float-literal ::= [-+]?digit+[.]digit*([eE][-+]?digit+)?
     /// digit ::= [0-9]
-    mutating func lexNumber(_ start: String.Index) throws -> Token {
-      var nextIndex = source.index(after: index)
-      while nextIndex < source.endIndex,
-        source[nextIndex].isASCII
-          && (source[nextIndex].isNumber || source[nextIndex] == "." || source[nextIndex] == "e"
-            || source[nextIndex] == "+" || source[nextIndex] == "-")
+    mutating func lexNumber(_ start: Int) throws -> Token {
+      bytes.formIndex(after: &index)
+      while index < bytes.endIndex,
+        (bytes[index] >= .zero && bytes[index] <= .nine)
+          || [.plus, .minus, .period, .e, .E].contains(bytes[index])
       {
-        source.formIndex(after: &index)
-        source.formIndex(after: &nextIndex)
+        bytes.formIndex(after: &index)
       }
 
-      let string = String(source[start...index])
-      if let value = Float(string) {
+      guard bytes[start] != .zero || index - start == 1 || bytes[start + 1] == .period else {
+        throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[start])))
+      }
+
+      let string = String(decoding: bytes[start..<index], as: Unicode.UTF8.self)
+      if let value = Double(string) {
+        bytes.formIndex(before: &index)
         return .number(value, string)
       }
       throw Error.invalidNumber(string)
     }
 
-    /// Lex a string literal.
-    ///
-    /// string-literal ::= '"' [^"\n\f\v\r]* '"'
-    mutating func lexString(_ start: String.Index) throws -> Token {
-      while index < source.endIndex {
-        source.formIndex(after: &index)
-        if source[index] == "\"" {
-          return .string(String(source[source.index(after: start)..<index]))
-        }
+    mutating func lexBool(_ start: Int) throws -> Token {
+      while index < bytes.endIndex, [.t, .r, .u, .e, .f, .a, .l, .s].contains(bytes[index]) {
+        bytes.formIndex(after: &index)
       }
-      throw Error.unexpectedEOF
-    }
-
-    mutating func lexNull(_ start: String.Index) throws -> Token {
-      while index < source.endIndex, ["n", "u", "l", "l"].contains(source[index]) {
-        source.formIndex(after: &index)
-      }
-      if source[start..<index] == "null" {
-        return .null
-      }
-      throw Error.unexpectedEOF
-    }
-
-    mutating func lexBool(_ start: String.Index) throws -> Token {
-      while index < source.endIndex,
-        ["t", "r", "u", "e", "f", "a", "l", "s"].contains(source[index])
-      {
-        source.formIndex(after: &index)
-      }
-      if let value = Bool(String(source[start..<index])) {
+      if let value = Bool(String(decoding: bytes[start..<index], as: Unicode.UTF8.self)) {
+        bytes.formIndex(before: &index)
         return .bool(value)
+      }
+      throw Error.unexpectedEOF
+    }
+
+    mutating func lexNull(_ start: Int) throws -> Token {
+      while index < bytes.endIndex, [.n, .u, .l].contains(bytes[index]) {
+        bytes.formIndex(after: &index)
+      }
+      if String(decoding: bytes[start..<index], as: Unicode.UTF8.self) == "null" {
+        bytes.formIndex(before: &index)
+        return .null
       }
       throw Error.unexpectedEOF
     }
@@ -195,82 +185,88 @@ extension JSON {
     }
 
     mutating func parse() throws -> JSON {
+      let json: JSON
       switch try lexer.lex() {
       case .leftBrace:
-        return try parseObject()
+        json = try parseObject()
       case .leftBrack:
-        return try parseArray()
+        json = try parseArray()
       case let token:
         throw Error.invalidToken(token)
       }
+      if try lexer.lex() != .eof {
+        throw Error.invalidToken(Token.eof)
+      }
+      return json
     }
 
     mutating func parseObject() throws -> JSON {
       var object = [String: JSON]()
-
       var token = try lexer.lex()
-      while token != .eof && token != .rightBrace {
-        guard case .string(let key) = token else {
-          throw Error.invalidToken(token)
-        }
-
-        token = try lexer.lex()
-        guard token == .colon else {
-          throw Error.invalidToken(token)
-        }
-
-        token = try lexer.lex()
+      while token != .eof {
         switch token {
-        case .leftBrace:
-          object[key] = try parseObject()
-        case .leftBrack:
-          object[key] = try parseArray()
-        case .string(let value):
-          object[key] = .string(value)
-        case .number(let value, _):
-          object[key] = .float(value)
-        case .bool(let value):
-          object[key] = .bool(value)
-        case .null:
-          object[key] = .null
+        case .rightBrace:
+          return .object(object)
+        case .comma:
+          token = try lexer.lex()
+          if object.isEmpty || token == .comma || token == .rightBrace {
+            throw Error.invalidObject(token)
+          }
+          continue
+        case .string(let key):
+          token = try lexer.lex()
+          if token != .colon {
+            throw Error.invalidObject(token)
+          }
+          token = try lexer.lex()
+          object[key] = try parseValue(token)
         default:
-          ()
+          throw Error.invalidObject(token)
         }
         token = try lexer.lex()
-        while token != .eof, token.id != 6 {
-          token = try lexer.lex()
-        }
       }
-      return .object(object)
+      throw Error.invalidObject(token)
     }
 
     mutating func parseArray() throws -> JSON {
       var array = [JSON]()
 
       var token = try lexer.lex()
-      while token != .eof && token != .rightBrack {
+      while token != .eof {
         switch token {
-        case .leftBrace:
-          array.append(try parseObject())
-        case .leftBrack:
-          array.append(try parseArray())
-        case .string(let value):
-          array.append(.string(value))
-        case .number(let value, _):
-          array.append(.float(value))
-        case .bool(let value):
-          array.append(.bool(value))
-        case .null:
-          array.append(.null)
+        case .rightBrack:
+          return .array(array)
+        case .comma:
+          token = try lexer.lex()
+          if array.isEmpty || token == .rightBrack {
+            throw Error.invalidArray(token)
+          }
+          continue
         default:
-          ()
+          array.append(try parseValue(token))
         }
         token = try lexer.lex()
-        while token != .eof, token != .comma && token != .rightBrack {
-          token = try lexer.lex()
-        }
       }
-      return .array(array)
+      throw Error.invalidArray(token)
+    }
+
+    mutating func parseValue(_ token: Token) throws -> JSON {
+      switch token {
+      case .leftBrace:
+        return try parseObject()
+      case .leftBrack:
+        return try parseArray()
+      case .string(let value):
+        return .string(value)
+      case .number(let value, _):
+        return .number(value)
+      case .bool(let value):
+        return .bool(value)
+      case .null:
+        return .null
+      default:
+        throw Error.invalidToken(token)
+      }
     }
   }
 }
