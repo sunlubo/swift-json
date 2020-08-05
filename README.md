@@ -1,3 +1,3 @@
 # JSON
 
-A description of this package.
+A simple JSON parser in pure Swift.
