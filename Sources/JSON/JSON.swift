@@ -42,11 +42,13 @@ extension JSON {
 extension JSON {
   enum Error: Swift.Error {
     case invalidCharacter(Character)
+    case invalidEscape(Character)
+    case invalidNumber(String)
+    case numberWithLeadingZero
     case invalidObject(Token)
     case invalidArray(Token)
-    case invalidNumber(String)
     case invalidToken(Token)
-    case unexpectedEOF
+    case unexpectedEndOfFile
   }
 }
 
@@ -98,9 +100,6 @@ extension JSON {
       return .eof
     }
 
-    /// Lex a string literal.
-    ///
-    /// string-literal ::= '"' [^"\n\f\v\r]* '"'
     mutating func lexString(_ start: Int) throws -> Token {
       bytes.formIndex(after: &index)
       while index < bytes.endIndex {
@@ -110,27 +109,19 @@ extension JSON {
             String(decoding: bytes[bytes.index(after: start)..<index], as: Unicode.UTF8.self))
         case .backslash:
           bytes.formIndex(after: &index)
-          if bytes[index] == .x || bytes[index] == .zero || bytes[index] == .space
-            || bytes[index] == .newLine
-          {
-            throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[index])))
+          guard [.quote, .solidus, .backslash, .b, .f, .n, .r, .t, .u].contains(bytes[index]) else {
+            throw Error.invalidEscape(Character(Unicode.Scalar(bytes[index])))
           }
-        case .horizontalTab, .newLine:
+          bytes.formIndex(after: &index)
+        case .null ... .unitSeparator:
           throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[index])))
         default:
-          ()
+          bytes.formIndex(after: &index)
         }
-        bytes.formIndex(after: &index)
       }
-      throw Error.unexpectedEOF
+      throw Error.unexpectedEndOfFile
     }
 
-    /// Lex a number literal.
-    ///
-    /// number-literal ::= integer-literal | float-literal
-    /// integer-literal ::= digit+
-    /// float-literal ::= [-+]?digit+[.]digit*([eE][-+]?digit+)?
-    /// digit ::= [0-9]
     mutating func lexNumber(_ start: Int) throws -> Token {
       bytes.formIndex(after: &index)
       while index < bytes.endIndex,
@@ -141,7 +132,7 @@ extension JSON {
       }
 
       guard bytes[start] != .zero || index - start == 1 || bytes[start + 1] == .period else {
-        throw Error.invalidCharacter(Character(Unicode.Scalar(bytes[start])))
+        throw Error.numberWithLeadingZero
       }
 
       let string = String(decoding: bytes[start..<index], as: Unicode.UTF8.self)
@@ -160,7 +151,7 @@ extension JSON {
         bytes.formIndex(before: &index)
         return .bool(value)
       }
-      throw Error.unexpectedEOF
+      throw Error.unexpectedEndOfFile
     }
 
     mutating func lexNull(_ start: Int) throws -> Token {
@@ -171,7 +162,7 @@ extension JSON {
         bytes.formIndex(before: &index)
         return .null
       }
-      throw Error.unexpectedEOF
+      throw Error.unexpectedEndOfFile
     }
   }
 }
@@ -230,7 +221,6 @@ extension JSON {
 
     mutating func parseArray() throws -> JSON {
       var array = [JSON]()
-
       var token = try lexer.lex()
       while token != .eof {
         switch token {
