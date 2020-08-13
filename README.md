@@ -1,3 +1,3 @@
 # JSON
 
-A simple JSON parser in pure Swift.
+A JSON parser in pure Swift.
