@@ -7,8 +7,8 @@
 //
 
 extension UInt8 {
-  /// null
-  static let null: UInt8 = 0x0
+  ///
+  static let null: UInt8 = 0x00
   /// '\t'
   static let horizontalTab: UInt8 = 0x09
   /// '\n'
@@ -33,6 +33,8 @@ extension UInt8 {
   static let solidus: UInt8 = 0x2F
   /// 0
   static let zero: UInt8 = 0x30
+  /// 1
+  static let one: UInt8 = 0x31
   /// 9
   static let nine: UInt8 = 0x39
   /// :

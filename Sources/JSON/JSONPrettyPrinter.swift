@@ -1,12 +1,12 @@
 //
-//  PrettyPrinter.swift
+//  JSONPrettyPrinter.swift
 //  swift-json
 //
 //  Created by sunlubo on 2020/8/3.
 //  Copyright © 2020 sun. All rights reserved.
 //
 
-public struct PrettyPrinter {
+public struct JSONPrettyPrinter {
   var json: JSON
   var indention: Int
   var content: String
@@ -29,7 +29,7 @@ public struct PrettyPrinter {
 
 extension JSON {
 
-  func render(into stream: inout PrettyPrinter) {
+  func render(into stream: inout JSONPrettyPrinter) {
     switch self {
     case .object(let object):
       stream.write("{")
@@ -60,6 +60,7 @@ extension JSON {
         if index != 0 {
           stream.write(",")
           stream.write(" ")
+          stream.write("\n")
         }
         stream.indention += 2
         stream.write(String(repeating: " ", count: stream.indention))
